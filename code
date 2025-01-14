@@ -1,0 +1,90 @@
+import cv2
+
+def initialize_video_capture(video_path): #define funttion that takes the video path
+    cap = cv2.VideoCapture(video_path) # capture the video from the file
+    if not cap.isOpened(): #ckeck if video captured or not
+        raise ValueError("Error: Unable to open video file.")
+    return cap # if it is captured then return it
+
+def skip_frames(cap, num_frames): #define function that takes 2 cap and number of frames wanted to skip
+    for _ in range(num_frames): # Loops num_frames times, effectively skipping that many frames in the video.
+        ret, _ = cap.read() #read the next frame from the video and cap.read() returns a tuple where the first element ret is a boolean indicating the success of the read operation.
+        if not ret: #if frame not read
+            raise ValueError("Error: Unable to read frames from the video.")
+    return cap #return video after skipping frames
+
+def extract_roi(frame, roi): #extract_roi takes a frame and a tuple roi representing a region of interest
+    x, y, w, h = roi #Unpacks the tuple roi into variables the (x-coordinate, y-coordinate, width, and height)
+    return frame[y:y+h, x:x+w].copy() # Slices the frame to extract the specified region and returns a copy of this region
+
+def preprocess_frame(frame): #takes a single argument, frame, which is an image in BGR format.
+    
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) #Convert the color frame to grayscale
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    # apply gaussian This step reduces image noise and detail by using a kernel of size (5, 5) and a standard deviation of 0 in both x and y directions
+    # to prepare for thresholding
+    return blurred #This returned frame can be used for further analysis or operations.
+
+def detect_changes(frame_roi, roi_ref, threshold):#This function to detect significant changes in a ROI between two frames
+    # frame_roi, roi_ref are images
+    if len(roi_ref.shape) == 3 and roi_ref.shape[2] == 3: #Checks if roi_ref is a color image rgb=3 dimensions
+        roi_ref_gray = cv2.cvtColor(roi_ref, cv2.COLOR_BGR2GRAY) #if roi_ref is rgb Convert from BGR to grayscale
+    else:
+        roi_ref_gray = roi_ref #let roi_ref_gray=roi_ref if it is grayscale
+    diff = cv2.absdiff(roi_ref_gray, frame_roi) #calculate absolute difference between them, This difference highlights areas of change
+   
+    _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)#apply binary threshold to diff which any value above 30 set to 255(white) else set to 0(black) to create binary image
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))#create kernel for morphological operations. The size (5, 5)rectangle to reduce the noise
+    opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel) #Performs a morphological opening on the thresholded image using the defined kernel
+    #helps remove small noise points and smoothens the contours of detected changes.
+    nonzero_pixels = cv2.countNonZero(opening)#Counts the number of non-zero pixels in the opening image
+    #These pixels represent the areas where changes have been detected
+    return nonzero_pixels > threshold#True if the number of non-zero pixels exceeds the specified threshold, indicating that significant changes have occurred
+
+def main(video_path, sink_roi_list, threshold=500):#takes video_path, a list of tuples sink_roi_list (non-zeroes pixel) defining multiple regions of interest
+    cap = initialize_video_capture(video_path)# to create a video capture object cap from the path
+    _, frame = cap.read()#Reads the first frame from the video, the _ to ignore the return value which indicates whether the frame was read successfully
+    cap = skip_frames(cap, 2)#to skip the first two frames of the video
+    #used to bypass initial frames which might not be relevant for analysis.
+    sink_refs = [extract_roi(frame, roi) for roi in sink_roi_list]#list to extract and store the initial state of each ROI from the first frame
+    # stored in sink_refs will serve as the reference images for detecting changes
+    while True:
+        ret, frame = cap.read()#to read the next frame from the video. ret is a boolean indicating if the frame was successfully read
+        if not ret: #Checks if the frame was not successfully read, could happen if the end of the video is reached
+            break
+        
+        frame_gray = preprocess_frame(frame)# to convert the current frame to grayscale and apply Gaussian blur
+        
+        busy_sinks = []#empty list busy_sinks to keep track of indices of the sinks (ROIs) 
+        change_detected = False #to indicate whether any changes were detected in the current iteration
+        
+        for i, roi in enumerate(sink_roi_list): #loop over sink_roi_list 
+        #i being the index and roi the tuple describing the ROI (x, y, width, height).
+            x, y, w, h = roi #define the position and size of the region in the frame.
+            change = detect_changes(frame_gray[y:y+h, x:x+w], sink_refs[i], threshold) #The function checks if the number of changed pixels exceeds the threshold
+            #slice of frame_gray corresponding to the current ROI and the reference ROI from sink_refs[i]
+            if change: # if change is True, indicating a significant change was detected in the current ROI.
+                busy_sinks.append(i + 1)
+                sink_refs[i] = extract_roi(frame_gray, roi)#Updates the reference ROI in sink_refs[i] by extracting the current state of the ROI from frame_gray
+                change_detected = True #indicating that at least one change has been detected during this loop iteration.
+        
+        if change_detected:#Checks if any changes were detected during the current loop
+            if busy_sinks:
+                print(f"Sink {', '.join(map(str, busy_sinks))} is occupied.") #map(str, busy_sinks) converts each index in busy_sinks to a string
+            else:
+                print("No sink change detected.")
+        else:
+            print("It's empty.")  
+        
+        cv2.imshow('Frame', frame)
+        if cv2.waitKey(25) & 0xFF == ord('q'):
+            break
+    
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__": #to ensure that certain code blocks only execute when the script is run directly and not when imported as a module.
+    video_path = 'add_your_video_path.MP4'
+    sink_roi_list = [(120, 240, 180, 180), (340, 240, 180, 180), (580, 240, 180, 180)] #(x, y, width, height). These coordinates and dimensions define rectangular areas that will be monitored for changes
+    main(video_path, sink_roi_list) # starts the video processing with the specified settings. 
