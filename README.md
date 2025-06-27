@@ -30,8 +30,6 @@ Programming Language: Python
 
 Computer Vision Library: OpenCV
 
-Machine Learning: Pre-trained object detection model (e.g., YOLO, SSD, or similar)
-
 Hardware: Camera for video input and a computer for processing
 
 # Future Improvements:
